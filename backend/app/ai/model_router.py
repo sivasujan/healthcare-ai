@@ -207,14 +207,14 @@ class ModelRouter:
             max_tokens or settings.AI_MAX_TOKENS,
         )
 
-    def chat_stream(
+    async def chat_stream(
         self,
         messages: list[dict[str, str]],
         *,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream a chat conversation.
+        """Stream a chat conversation (async generator).
 
         Yields events: ``{"type": "token", "token": ...}`` and finally
         ``{"type": "done", "model": ..., "usage": {...}, "latency_ms": ...}``.
@@ -231,18 +231,18 @@ class ModelRouter:
         )
         started = time.perf_counter()
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                with client.stream(
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
                     headers=self._headers(),
                     json={**payload, "stream": True},
                 ) as response:
                     if response.status_code >= 400:
-                        body = "".join(response.iter_text()).strip()[:500]
+                        body = "".join([part async for part in response.aiter_text()]).strip()[:500]
                         yield {"type": "error", "message": f"Provider error {response.status_code}: {body}"}
                         return
-                    for line in response.iter_lines():
+                    async for line in response.aiter_lines():
                         if not line or not line.startswith("data:"):
                             continue
                         chunk = line[5:].strip()

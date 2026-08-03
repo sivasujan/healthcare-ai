@@ -85,6 +85,20 @@ def mock_router(monkeypatch):
                 return make_model_call(next(iter(responses.values())))
             return make_model_call("generic mock response")
 
+        async def fake_chat_stream(messages, **kwargs):
+            system = messages[0]["content"].lower() if messages else ""
+            user = messages[-1]["content"].lower() if len(messages) > 1 else ""
+            combined = f"{system} {user}"
+            content = "generic mock response"
+            for key, value in responses.items():
+                if key.replace("_", " ") in combined:
+                    content = value
+                    break
+            for word in content.split(" "):
+                yield {"type": "token", "token": word + " "}
+            yield {"type": "done", "model": "test/free-model", "latency_ms": 5.0}
+
         monkeypatch.setattr("app.ai.model_router.router.chat", fake_chat)
+        monkeypatch.setattr("app.ai.model_router.router.chat_stream", fake_chat_stream)
 
     return _install
