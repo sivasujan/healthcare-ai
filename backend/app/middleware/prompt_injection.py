@@ -8,6 +8,8 @@ rejected with a 400 response rather than being forwarded to the model.
 import re
 from typing import Optional
 
+from app.core.exceptions import AppError
+
 _PATTERNS: list[tuple[str, re.Pattern]] = [
     ("system_override", re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", re.I)),
     ("system_override", re.compile(r"disregard\s+(your\s+)?(previous|prior)\s+(instructions|prompt)", re.I)),
@@ -15,7 +17,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     ("system_override", re.compile(r"you\s+are\s+now\s+(an?\s+)?\w+\s+(without\s+)?(restrictions|guardrails|safety|limits)", re.I)),
     ("prompt_leak", re.compile(r"(print|reveal|show|display|repeat).{0,40}(system\s+prompt|instructions|prompt\b)", re.I)),
     ("prompt_leak", re.compile(r"what\s+(is|are|were)\s+your\s+(system\s+)?prompt", re.I)),
-    ("delimiter_break", re.compile(r"(<|\\[)?(system|user)\s*>\s*(:|\|)", re.I)),
+    ("delimiter_break", re.compile(r"(\[?system|\[?user)\s*:\s*\]?", re.I)),
     ("delimiter_break", re.compile(r"\]\]\s*to\s*\w+", re.I)),
 ]
 
@@ -32,8 +34,17 @@ _BLOCKLIST_WORDS = {
 }
 
 
-class PromptInjectionError(ValueError):
-    """Raised when user input looks like a prompt injection attempt."""
+class PromptInjectionError(AppError):
+    """Raised when user input looks like a prompt injection attempt.
+
+    Inherits from :class:`AppError` so it is returned as an HTTP 400 by the
+    global exception handler.
+    """
+
+    status_code = 400
+
+    def __init__(self, message: str = "Input rejected as a potential prompt injection"):
+        super().__init__(message, status_code=400)
 
 
 def validate_prompt_safety(text: str) -> Optional[str]:
@@ -54,4 +65,4 @@ def assert_prompt_safe(text: str) -> None:
     """Raise :class:`PromptInjectionError` when the input is unsafe."""
     reason = validate_prompt_safety(text)
     if reason:
-        raise PromptInjectionError(reason)
+        raise PromptInjectionError(f"Input rejected: {reason}")

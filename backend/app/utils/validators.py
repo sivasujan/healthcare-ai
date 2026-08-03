@@ -7,6 +7,7 @@ _SQL_PATTERNS = [
     re.compile(r"\b(union|select)\s+(all|distinct)?\s*\*?\s+from\b", re.I),
     re.compile(r"(/\*|--\s|\;|\#)\s*(drop|truncate|insert|update|delete)", re.I),
     re.compile(r"\b(sleep|benchmark)\s*\(", re.I),
+    re.compile(r"\b(or|and)\s+\d+\s*=\s*\d+\b", re.I),
     re.compile(r"(information_schema|pg_catalog|sqlite_master)", re.I),
 ]
 

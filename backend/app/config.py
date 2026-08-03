@@ -47,10 +47,10 @@ class Settings(BaseSettings):
     OPENROUTER_SITE_URL: str = "http://localhost:3000"
     OPENROUTER_SITE_NAME: str = "HealthCare Assistant"
 
-    PRIMARY_MODEL: str = "openai/gpt-4o"
-    SECONDARY_MODEL: str = "anthropic/claude-3.5-sonnet"
-    FALLBACK_MODEL: str = "google/gemini-1.5-flash"
-    FREE_MODEL: str = "google/gemma-2-9b-it:free"
+    PRIMARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
+    SECONDARY_MODEL: str = "openai/gpt-oss-20b:free"
+    FALLBACK_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    FREE_MODEL: str = "google/gemma-4-26b-a4b-it:free"
 
     AI_TIMEOUT_SECONDS: int = 60
     AI_MAX_RETRIES: int = 2
