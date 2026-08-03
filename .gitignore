@@ -1,0 +1,36 @@
+# --- Secrets (never commit) ---
+.env
+*.env
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.db
+*.sqlite3
+backend/healthcare.db
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Logs / OS ---
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/
+.idea/
