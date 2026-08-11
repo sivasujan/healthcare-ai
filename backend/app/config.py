@@ -42,10 +42,16 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # --- AI / OpenRouter ---
+    AI_PROVIDER: str = "auto"  # auto | gemini | openrouter (auto = Gemini first, OpenRouter fallback)
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_SITE_URL: str = "http://localhost:3000"
     OPENROUTER_SITE_NAME: str = "HealthCare Assistant"
+
+    # --- AI / Gemini (fast provider) ---
+    GEMINI_API_KEY: str = ""
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+    GEMINI_MODEL: str = "gemini-3.6-flash"
 
     PRIMARY_MODEL: str = "google/gemma-4-26b-a4b-it:free"
     SECONDARY_MODEL: str = "openai/gpt-oss-20b:free"
@@ -58,7 +64,7 @@ class Settings(BaseSettings):
     AI_MAX_TOKENS: int = 2048
 
     # --- Admin ---
-    ADMIN_EMAIL: str = "admin@healthcare.local"
+    ADMIN_EMAIL: str = "admin@healthcare.ai"
     ADMIN_PASSWORD: str = "Admin@12345"
 
     model_config = SettingsConfigDict(

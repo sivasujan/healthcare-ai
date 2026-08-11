@@ -43,7 +43,7 @@ if (-not (Test-Path (Join-Path $root "frontend\node_modules"))) {
 }
 
 Write-Host "[3/3] Starting frontend (Next.js on :3000)..." -ForegroundColor Green
-$frontend = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -WorkingDirectory (Join-Path $root "frontend") -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $env:TEMP "hc_frontend.log") -RedirectStandardError (Join-Path $env:TEMP "hc_frontend_err.log")
+$frontend = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -WorkingDirectory (Join-Path $root "frontend") -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $env:TEMP "hc_frontend.log") -RedirectStandardError (Join-Path $env:TEMP "hc_frontend_err.log")
 
 Write-Host ""
 Write-Host "  Frontend: http://localhost:3000" -ForegroundColor Cyan

@@ -109,7 +109,7 @@ export default function LoginPage() {
           </CardContent>
         </Card>
         <p className="mt-4 text-center text-xs text-muted-foreground">
-          Demo admin: admin@healthcare.local / Admin@12345
+          Demo admin: admin@healthcare.ai / Admin@12345
         </p>
       </div>
     </div>

@@ -38,6 +38,12 @@ PRICING: dict[str, tuple[float, float]] = {
     "google/gemma-3-27b-it:free": (0.0, 0.0),
     "nvidia/nemotron-3-ultra-550b-a55b:free": (0.0, 0.0),
     "meta-llama/llama-3.3-70b-instruct:free": (0.0, 0.0),
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-3.6-flash": (0.30, 2.50),
+    "gemini-3.5-flash": (0.30, 2.50),
 }
 
 
@@ -87,11 +93,23 @@ class ModelRouter:
         self.max_retries = settings.AI_MAX_RETRIES
         self.api_key = settings.OPENROUTER_API_KEY
         self.base_url = settings.OPENROUTER_BASE_URL.rstrip("/")
+        self.gemini_key = settings.GEMINI_API_KEY
+        self.gemini_base_url = settings.GEMINI_BASE_URL.rstrip("/")
+        self.gemini_model = settings.GEMINI_MODEL
 
     @property
     def configured(self) -> bool:
         """Whether an OpenRouter API key is available."""
         return bool(self.api_key)
+
+    @property
+    def gemini_configured(self) -> bool:
+        """Whether a Gemini API key is available."""
+        return bool(self.gemini_key)
+
+    def _gemini_preferred(self) -> bool:
+        """Gemini is used first when it is configured and AI_PROVIDER allows it."""
+        return bool(self.gemini_key) and settings.AI_PROVIDER in ("auto", "gemini")
 
     def _tier_order(self) -> list[tuple[str, str]]:
         tiers = get_model_tiers()
@@ -117,6 +135,89 @@ class ModelRouter:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+
+    # ----------------------------------------------------------------- Gemini
+    @staticmethod
+    def _to_gemini_payload(model: str, messages: list[dict], temperature: float, max_tokens: int) -> dict:
+        """Convert OpenAI-style messages to a Gemini generateContent payload."""
+        system_parts = [m["content"] for m in messages if m["role"] == "system"]
+        contents: list[dict] = []
+        for m in messages:
+            if m["role"] == "system":
+                continue
+            contents.append(
+                {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+            )
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+        }
+        if system_parts:
+            payload["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_parts)}]}
+        return payload
+
+    @staticmethod
+    def _parse_gemini(data: dict) -> tuple[str, int, int]:
+        """Extract text + usage from a Gemini generateContent response."""
+        content = data["candidates"][0]["content"]["parts"][0]["text"]
+        usage = data.get("usageMetadata", {})
+        prompt_tokens = usage.get("promptTokenCount", 0) or 0
+        completion_tokens = usage.get("candidatesTokenCount", 0) or 0
+        return content, prompt_tokens, completion_tokens
+
+    def _gemini_request_once(
+        self, model: str, messages: list[dict], temperature: float, max_tokens: int
+    ) -> dict:
+        payload = self._to_gemini_payload(model, messages, temperature, max_tokens)
+        url = f"{self.gemini_base_url}/models/{model}:generateContent"
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(url, params={"key": self.gemini_key}, json=payload)
+        except httpx.TimeoutException as exc:
+            raise ModelTimeoutError(f"Gemini {model} timed out after {self.timeout}s") from exc
+        except httpx.HTTPError as exc:
+            raise ModelProviderError(f"Network error calling Gemini {model}: {exc}") from exc
+
+        if response.status_code >= 500:
+            raise ModelProviderError(f"Provider error {response.status_code} from Gemini {model}")
+        if response.status_code == 429:
+            raise ModelProviderError(f"Rate limited (429) by Gemini for {model}")
+        if response.status_code >= 400:
+            body = response.text[:500]
+            raise ModelProviderError(f"Bad request ({response.status_code}) for Gemini {model}: {body}")
+        try:
+            return response.json()
+        except json.JSONDecodeError as exc:
+            raise ModelProviderError(f"Invalid JSON response from Gemini {model}") from exc
+
+    def _gemini_chat(self, messages: list[dict], temperature: float, max_tokens: int) -> ModelCall:
+        """Invoke the configured Gemini model with per-attempt retries."""
+        last_error: Optional[Exception] = None
+        for attempt in range(self.max_retries + 1):
+            started = time.perf_counter()
+            try:
+                data = self._gemini_request_once(self.gemini_model, messages, temperature, max_tokens)
+                latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                content, prompt_tokens, completion_tokens = self._parse_gemini(data)
+                cost = estimate_cost(self.gemini_model, prompt_tokens, completion_tokens)
+                return ModelCall(
+                    content=content,
+                    model=data.get("modelVersion", self.gemini_model),
+                    tier="gemini",
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                    cost_usd=cost,
+                    usage=data.get("usageMetadata", {}),
+                )
+            except ModelTimeoutError as exc:
+                last_error = exc
+                logger.warning("Timeout on Gemini %s (attempt %d/%d)", self.gemini_model, attempt + 1, self.max_retries + 1)
+            except ModelProviderError as exc:
+                last_error = exc
+                logger.warning("Gemini error on %s: %s", self.gemini_model, exc)
+                break  # 4xx errors won't succeed on retry
+        raise ModelProviderError(f"Gemini failed. Last error: {last_error}")
 
     @staticmethod
     def _parse_usage(usage: Optional[dict]) -> tuple[int, int]:
@@ -156,13 +257,25 @@ class ModelRouter:
             raise ModelProviderError(f"Invalid JSON response from {model}") from exc
 
     def _chat(self, messages: list[dict], temperature: float, max_tokens: int) -> ModelCall:
-        """Invoke models tier-by-tier with per-tier retries."""
+        """Invoke models tier-by-tier with per-tier retries.
+
+        When Gemini is configured and preferred it is tried first (faster),
+        falling back to the OpenRouter tiers on any error.
+        """
+        gemini_error: Optional[Exception] = None
+        if self._gemini_preferred():
+            try:
+                return self._gemini_chat(messages, temperature, max_tokens)
+            except (ModelTimeoutError, ModelProviderError) as exc:
+                gemini_error = exc
+                logger.warning("Gemini failed, falling back to OpenRouter tiers: %s", exc)
+
         if not self.configured:
             raise ModelProviderError(
-                "OpenRouter API key not configured. Set OPENROUTER_API_KEY in backend/.env"
+                "No AI provider configured. Set GEMINI_API_KEY or OPENROUTER_API_KEY in backend/.env"
             )
 
-        last_error: Optional[Exception] = None
+        last_error: Optional[Exception] = gemini_error
         for tier, model in self._tier_order():
             for attempt in range(self.max_retries + 1):
                 started = time.perf_counter()
@@ -207,6 +320,45 @@ class ModelRouter:
             max_tokens or settings.AI_MAX_TOKENS,
         )
 
+    async def _gemini_chat_stream(
+        self, messages: list[dict], temperature: float, max_tokens: int
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream from Gemini. Yields token events and a done event."""
+        payload = self._to_gemini_payload(self.gemini_model, messages, temperature, max_tokens)
+        url = f"{self.gemini_base_url}/models/{self.gemini_model}:streamGenerateContent"
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST", url, params={"alt": "sse", "key": self.gemini_key}, json=payload
+                ) as response:
+                    if response.status_code >= 400:
+                        body = "".join([part async for part in response.aiter_text()]).strip()[:500]
+                        yield {"type": "error", "message": f"Gemini provider error {response.status_code}: {body}"}
+                        return
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        chunk = line[5:].strip()
+                        if chunk == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(chunk)
+                        except json.JSONDecodeError:
+                            continue
+                        parts = obj.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                        for part in parts:
+                            text = part.get("text")
+                            if text and not part.get("thought"):
+                                yield {"type": "token", "token": text}
+        except (httpx.TimeoutException, httpx.HTTPError) as exc:
+            logger.warning("Gemini streaming failed: %s", exc)
+            yield {"type": "error", "message": f"Gemini streaming failed: {exc}"}
+            return
+
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        yield {"type": "done", "model": self.gemini_model, "latency_ms": latency_ms}
+
     async def chat_stream(
         self,
         messages: list[dict[str, str]],
@@ -216,18 +368,33 @@ class ModelRouter:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a chat conversation (async generator).
 
-        Yields events: ``{"type": "token", "token": ...}`` and finally
-        ``{"type": "done", "model": ..., "usage": {...}, "latency_ms": ...}``.
+        Uses Gemini first when configured (faster); falls back to OpenRouter
+        streaming on any error. Yields ``{"type": "token", "token": ...}``
+        events and finally ``{"type": "done", "model": ..., "latency_ms": ...}``.
         """
+        temperature = temperature or settings.AI_TEMPERATURE
+        max_tokens = max_tokens or settings.AI_MAX_TOKENS
+
+        if self._gemini_preferred():
+            saw_error = False
+            async for event in self._gemini_chat_stream(messages, temperature, max_tokens):
+                if event["type"] == "error":
+                    saw_error = True
+                    logger.warning("Gemini streaming failed, falling back: %s", event["message"])
+                    break
+                yield event
+            if not saw_error:
+                return
+
         if not self.configured:
-            yield {"type": "error", "message": "OpenRouter API key not configured"}
+            yield {"type": "error", "message": "No AI provider configured. Set GEMINI_API_KEY or OPENROUTER_API_KEY in backend/.env"}
             return
 
         payload = self._build_payload(
             self._tier_order()[0][1],
             messages,
-            temperature or settings.AI_TEMPERATURE,
-            max_tokens or settings.AI_MAX_TOKENS,
+            temperature,
+            max_tokens,
         )
         started = time.perf_counter()
         try:
