@@ -1,6 +1,27 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@font-face {
+  font-family: Geist;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Geist Mono;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/Regular.woff2") format("woff2");
+}
+
+:root {
+  --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-geist-mono: "Geist Mono", ui-monospace, monospace;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -83,6 +104,10 @@
   --radius-xl: calc(var(--radius) + 4px);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+body {
+  font-family: var(--font-geist-sans);
 }
 
 @layer base {
